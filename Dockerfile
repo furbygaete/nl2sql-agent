@@ -3,17 +3,22 @@
 # ============================================================
 # Stage 1 — builder: resolve deps + build .venv with uv
 # ============================================================
+# NOTE: builder WORKDIR and UV_PROJECT_ENVIRONMENT must match the runtime
+# WORKDIR + venv path. Entry-point scripts (e.g. .venv/bin/fastapi) bake in
+# absolute shebangs like `#!/workspace/.venv/bin/python`, so if the venv lives
+# at /app/.venv in the builder and gets COPYed to /workspace/.venv at runtime,
+# every console script breaks with `sh: not found` (bad interpreter).
 FROM python:3.13-slim AS builder
 
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
-    UV_PROJECT_ENVIRONMENT=/app/.venv \
+    UV_PROJECT_ENVIRONMENT=/workspace/.venv \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /usr/local/bin/
 
-WORKDIR /app
+WORKDIR /workspace
 
 # Layer 1: install deps only (cached unless pyproject.toml or uv.lock changes)
 COPY pyproject.toml uv.lock ./
@@ -45,8 +50,9 @@ RUN groupadd --system app \
 
 WORKDIR /workspace
 
-# Bring the resolved .venv from the builder stage
-COPY --from=builder --chown=app:app /app/.venv /workspace/.venv
+# Bring the resolved .venv from the builder stage. Path MUST match the
+# builder's UV_PROJECT_ENVIRONMENT or console-script shebangs break.
+COPY --from=builder --chown=app:app /workspace/.venv /workspace/.venv
 
 # Source + skill index. SQLcl is provided via the /workspace/sqlcl_files volume
 # (bind-mount your local SQLcl install or pre-bake an image that copies it in).

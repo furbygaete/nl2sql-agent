@@ -13,7 +13,12 @@
       "Bash(docker --version)",
       "Bash(docker compose *)",
       "Bash(git rm *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git ls-tree *)",
+      "Bash(echo \"\\(count\\): $\\(git ls-tree -r HEAD --name-only 2>&1)",
+      "Bash(xargs '-I{}' sh -c 'size=$\\(git cat-file -s \"HEAD:{}\" 2>/dev/null\\); printf \"%10s %s\\\\n\" \"$size\" \"{}\"')",
+      "Bash(git -c core.autocrlf=false commit -m ' *)",
+      "Bash(docker run *)"
     ]
   }
 }

@@ -139,7 +139,8 @@ code, kbd, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; 
   overflow-y: auto;
   padding: 4px 8px 12px;
 }
-.threads-label {
+.threads-label,
+.db-label {
   padding: 10px 10px 6px;
   font-size: 10.5px;
   text-transform: uppercase;
@@ -147,35 +148,140 @@ code, kbd, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; 
   color: var(--text-3);
   font-weight: 600;
 }
+
+/* ---------- Database connections (sidebar) ---------- */
+.db-section {
+  padding: 0 8px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.db-list { display: flex; flex-direction: column; gap: 1px; }
+.db-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-2);
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  cursor: default;
+  position: relative;
+}
+.db-item .db-name {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.db-item.active {
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+.db-item.active .db-name { color: var(--text); }
+
+/* Quasar tooltip override so the host:port/service popup matches the
+   token-based theme in both light and dark. */
+.q-tooltip {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 8px !important;
+  padding: 7px 10px !important;
+  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+  font-size: 11.5px !important;
+  letter-spacing: -0.005em !important;
+  box-shadow: var(--shadow-md) !important;
+  max-width: 360px !important;
+}
+.db-status {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+.db-item.active .db-status {
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
+}
+.db-empty {
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  font-style: italic;
+}
+.thread-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin: 1px 0;
+  border-radius: var(--radius-sm);
+  position: relative;
+  transition: background .12s;
+}
+.thread-row:hover { background: var(--surface-2); }
+.thread-row.active { background: var(--primary-soft); }
 .thread-item {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  margin: 1px 0;
   border-radius: var(--radius-sm);
   color: var(--text-2);
   cursor: pointer;
   font-size: 13.5px;
   border: 0;
   background: transparent;
-  width: 100%;
   text-align: left;
   font-family: inherit;
-  transition: background .12s, color .12s;
+  min-width: 0;
+  transition: color .12s;
 }
-.thread-item:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-.thread-item.active {
-  background: var(--primary-soft);
+.thread-row:hover .thread-item { color: var(--text); }
+.thread-row.active .thread-item {
   color: var(--primary);
   font-weight: 500;
+}
+.thread-item .thread-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .thread-item:focus-visible {
   outline: none;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent);
+}
+.thread-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  margin: 5px 5px 5px 0;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s, background .12s, color .12s;
+  flex-shrink: 0;
+}
+.thread-row:hover .thread-del,
+.thread-row:focus-within .thread-del { opacity: 1; }
+.thread-del:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.thread-del:focus-visible {
+  opacity: 1;
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 25%, transparent);
 }
 
 .sidebar-footer {
@@ -549,6 +655,7 @@ code, kbd, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; 
 _ICON_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
 _ICON_MENU = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>'
 _ICON_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>'
+_ICON_X = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>'
 _ICON_SUN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>'
 _ICON_MOON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
 _ICON_AUTO = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>'
@@ -577,6 +684,8 @@ def init_nicegui(fastapi_state) -> None:
             app.storage.user["threads"] = [_DEFAULT_THREAD]
         if "current_thread" not in app.storage.user:
             app.storage.user["current_thread"] = _DEFAULT_THREAD
+        if "thread_messages" not in app.storage.user:
+            app.storage.user["thread_messages"] = {}
         if "theme" not in app.storage.user:
             app.storage.user["theme"] = "system"
 
@@ -602,6 +711,12 @@ def init_nicegui(fastapi_state) -> None:
                 with new_chat_btn:
                     ui.html(_ICON_PLUS)
                     ui.html("<span>New conversation</span>")
+
+                ui.html('<div class="db-label">Database</div>')
+                db_section = ui.element("div").classes("db-section")
+                with db_section:
+                    db_list = ui.element("div").classes("db-list")
+                    db_list.props('role="list" aria-label="Database connections"')
 
                 ui.html('<div class="threads-label">Conversations</div>')
                 threads_container = ui.element("nav").classes("threads")
@@ -637,11 +752,6 @@ def init_nicegui(fastapi_state) -> None:
                         ui.html('<span>NL2SQL Agent</span>')
 
                     ui.element("div").classes("spacer")
-
-                    clear_btn = ui.element("button").classes("icon-btn")
-                    clear_btn.props('type="button" aria-label="Clear conversation" title="Clear conversation"')
-                    with clear_btn:
-                        ui.html(_ICON_TRASH)
 
                 scroll_area = ui.scroll_area().classes("chat-scroll")
                 with scroll_area:
@@ -681,20 +791,65 @@ def init_nicegui(fastapi_state) -> None:
             current = app.storage.user.get("current_thread")
             with threads_container:
                 for tid in app.storage.user.get("threads", []):
-                    btn = ui.element("button").classes("thread-item")
-                    btn.props(f'type="button" aria-label="Open {tid}"')
+                    row = ui.element("div").classes("thread-row")
                     if tid == current:
-                        btn.classes(add="active")
-                    with btn:
-                        ui.html(
-                            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
-                            'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
-                            'stroke-linejoin="round" aria-hidden="true">'
-                            '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
-                            '</svg>'
-                        )
-                        ui.html(f"<span>{_escape(tid)}</span>")
-                    btn.on("click", lambda _e, t=tid: switch_thread(t))
+                        row.classes(add="active")
+                    with row:
+                        btn = ui.element("button").classes("thread-item")
+                        btn.props(f'type="button" aria-label="Open {_escape(tid)}"')
+                        with btn:
+                            ui.html(
+                                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
+                                'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+                                'stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;">'
+                                '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
+                                '</svg>'
+                            )
+                            ui.html(f'<span class="thread-name">{_escape(tid)}</span>')
+                        btn.on("click", lambda _e, t=tid: switch_thread(t))
+
+                        del_btn = ui.element("button").classes("thread-del")
+                        del_btn.props(f'type="button" aria-label="Delete conversation {_escape(tid)}" title="Delete"')
+                        with del_btn:
+                            ui.html(_ICON_X)
+                        del_btn.on("click", lambda _e, t=tid: delete_thread(t))
+
+        conn_render_state = {"active": object(), "names": object()}
+
+        def render_connections(*, force: bool = False) -> None:
+            saved = list(getattr(fastapi_state.state, "sqlcl_connections", []) or [])
+            active = getattr(fastapi_state.state, "active_connection", None)
+            names_sig = tuple(c.get("nombre", "") for c in saved)
+            if (
+                not force
+                and conn_render_state["active"] == active
+                and conn_render_state["names"] == names_sig
+            ):
+                return
+            conn_render_state["active"] = active
+            conn_render_state["names"] = names_sig
+            db_list.clear()
+            with db_list:
+                if not saved:
+                    ui.html(
+                        '<div class="db-empty">No saved connections. '
+                        'Set <code>SQLCL_CONNECTIONS</code> in <code>.env</code>.</div>'
+                    )
+                    return
+                for conn in saved:
+                    name = conn.get("nombre", "")
+                    target = _dsn_target(conn.get("cadena", ""))
+                    is_active = name == active
+                    item = ui.element("div").classes("db-item")
+                    if is_active:
+                        item.classes(add="active")
+                    aria = f"{name} (active) — {target}" if is_active else f"{name} — {target}"
+                    item.props(f'role="listitem" aria-label="{_escape(aria)}"')
+                    with item:
+                        ui.html('<span class="db-status" aria-hidden="true"></span>')
+                        ui.html(f'<span class="db-name">{_escape(name)}</span>')
+                    if target:
+                        item.tooltip(target)
 
         def render_suggestions() -> None:
             suggestions.clear()
@@ -725,23 +880,83 @@ def init_nicegui(fastapi_state) -> None:
         def show_empty(show: bool) -> None:
             empty_container.style(f"display: {'flex' if show else 'none'};")
 
-        def reset_chat_view() -> None:
+        def _get_transcript(tid: str) -> list[dict]:
+            messages = app.storage.user.setdefault("thread_messages", {})
+            return messages.setdefault(tid, [])
+
+        def _save_transcript(tid: str, transcript: list[dict]) -> None:
+            messages = app.storage.user.setdefault("thread_messages", {})
+            messages[tid] = transcript
+            app.storage.user["thread_messages"] = messages
+
+        def _render_user_bubble(text: str) -> None:
+            with chat_box:
+                with ui.element("div").classes("msg user"):
+                    with ui.element("div").classes("bubble"):
+                        ui.html(f"<span>{_escape(text)}</span>")
+
+        def _render_bot_bubble(markdown_text: str) -> None:
+            with chat_box:
+                with ui.element("div").classes("msg bot"):
+                    with ui.element("div").classes("bubble"):
+                        ui.markdown(markdown_text)
+
+        def render_chat_history() -> None:
             chat_box.clear()
-            show_empty(True)
+            tid = app.storage.user.get("current_thread", "")
+            transcript = _get_transcript(tid)
+            if not transcript:
+                show_empty(True)
+                return
+            show_empty(False)
+            for entry in transcript:
+                role = entry.get("role")
+                content = entry.get("content", "")
+                if role == "user":
+                    _render_user_bubble(content)
+                else:
+                    _render_bot_bubble(content)
+            scroll_area.scroll_to(percent=1.0)
 
         async def create_new_thread() -> None:
             new_id = f"Session {uuid.uuid4().hex[:4].upper()}"
             app.storage.user["threads"].append(new_id)
             app.storage.user["current_thread"] = new_id
+            _save_transcript(new_id, [])
             render_threads()
-            reset_chat_view()
+            render_chat_history()
             ui.notify(f"New session: {new_id}", type="positive")
 
         def switch_thread(new_thread_id: str) -> None:
             app.storage.user["current_thread"] = new_thread_id
             render_threads()
-            reset_chat_view()
+            render_chat_history()
             close_drawer()
+
+        def delete_thread(tid: str) -> None:
+            threads = list(app.storage.user.get("threads", []))
+            if tid not in threads:
+                return
+            threads.remove(tid)
+            messages = app.storage.user.setdefault("thread_messages", {})
+            messages.pop(tid, None)
+            app.storage.user["threads"] = threads
+            app.storage.user["thread_messages"] = messages
+
+            current = app.storage.user.get("current_thread")
+            if not threads:
+                # Last conversation removed — recreate the default so the UI
+                # always has a thread to land on.
+                threads.append(_DEFAULT_THREAD)
+                app.storage.user["threads"] = threads
+                app.storage.user["current_thread"] = _DEFAULT_THREAD
+                _save_transcript(_DEFAULT_THREAD, [])
+            elif current == tid:
+                app.storage.user["current_thread"] = threads[0]
+
+            render_threads()
+            render_chat_history()
+            ui.notify(f'Deleted "{tid}"', type="info")
 
         def open_drawer() -> None:
             sidebar.classes(add="open")
@@ -768,6 +983,11 @@ def init_nicegui(fastapi_state) -> None:
             send_btn.props('disabled')
             msg_input.value = ""
             show_empty(False)
+
+            send_thread_id = app.storage.user["current_thread"]
+            transcript = _get_transcript(send_thread_id)
+            transcript.append({"role": "user", "content": texto})
+            _save_transcript(send_thread_id, transcript)
 
             full_response = ""
             response_md = None
@@ -884,6 +1104,9 @@ def init_nicegui(fastapi_state) -> None:
                         "_(no textual response — check the server logs "
                         "for the agent's last message)_"
                     )
+                if full_response:
+                    transcript.append({"role": "bot", "content": full_response})
+                    _save_transcript(send_thread_id, transcript)
                 local_state["is_processing"] = False
                 msg_input.enable()
                 send_btn.props(remove="disabled")
@@ -892,7 +1115,6 @@ def init_nicegui(fastapi_state) -> None:
 
         # ----- wire events -----
         new_chat_btn.on("click", lambda _e: create_new_thread())
-        clear_btn.on("click", lambda _e: reset_chat_view())
         hamburger.on("click", lambda _e: open_drawer())
         scrim.on("click", lambda _e: close_drawer())
         btn_light.on("click", lambda _e: set_theme("light"))
@@ -902,9 +1124,16 @@ def init_nicegui(fastapi_state) -> None:
         msg_input.on("keydown.enter.exact.prevent", send)
 
         # ----- initial render -----
+        render_connections(force=True)
         render_threads()
         render_suggestions()
+        render_chat_history()
         update_theme_seg()
+
+        # Poll the active connection so the green dot follows the agent
+        # whenever it switches MCP `connect` mid-conversation. Cheap when
+        # nothing changed (the helper short-circuits before touching DOM).
+        ui.timer(3.0, render_connections)
 
 
 def _apply_theme(dark, mode: str) -> None:
@@ -914,6 +1143,12 @@ def _apply_theme(dark, mode: str) -> None:
         dark.value = False
     else:
         dark.value = None
+
+
+def _dsn_target(cadena: str) -> str:
+    if not cadena:
+        return ""
+    return cadena.rsplit("@", 1)[-1].strip()
 
 
 def _escape(text: str) -> str:
