@@ -1,0 +1,16 @@
+.venv/
+.env
+data/schema.json
+__pycache__/
+.pytest_cache/
+*.pyc
+memory/
+.sqlcl/
+# SQLcl is installed via scripts/install-sqlcl.{ps1,sh} on each laptop.
+# Comment the next line out and use git-lfs if you'd rather commit the binaries.
+vendor/sqlcl/
+
+# Oracle Instant Client is downloaded per-machine, not committed.
+# Use scripts/install-instantclient.{ps1,sh} or download manually from
+# https://www.oracle.com/database/technologies/instant-client/downloads.html
+third_party/
