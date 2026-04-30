@@ -4,8 +4,13 @@
 # Brings up the FastAPI app on http://localhost:8000 with:
 #   - secrets from .env (OPENAI_API_KEY, ANTHROPIC_API_KEY, SQLCL_CONNECTIONS, ...)
 #   - LangGraph SQLite checkpoints persisted on the host at ./memory/
-#   - SQLcl binaries bind-mounted from ./vendor/sqlcl/ (per-machine install)
+#   - Linux SQLcl + Oracle Instant Client (thick mode) baked into the image
+#     via scripts/install-{sqlcl,instantclient}.sh during the Docker build
 #   - healthcheck against /health, restart on failure
+#
+# NOTE: do NOT bind-mount your host ./vendor/sqlcl or ./third_party — on a
+# Windows host those folders contain Windows binaries that this Linux
+# container can't execute. Both are installed inside the image instead.
 
 services:
   nl2sql-agent:
@@ -24,15 +29,16 @@ services:
 
     environment:
       API_WORKERS: "1"
-      # SQLCL_PATH is fixed inside the container; the host binary is mounted
-      # at /workspace/sqlcl_files via the volume below.
-      SQLCL_PATH: "/workspace/sqlcl_files/bin/sql"
+      # Override host paths from .env: inside the container, SQLcl and the
+      # Oracle Instant Client live at fixed locations baked in by the build.
+      SQLCL_PATH: "/workspace/vendor/sqlcl/bin/sql"
+      ORACLE_CLIENT_MODE: "thick"
+      ORACLE_CLIENT_LIB_DIR: "/workspace/third_party/instantclient_23_6"
+      ORACLE_CLIENT_CONFIG_DIR: ""
 
     volumes:
       # LangGraph AsyncSqliteSaver / AsyncSqliteStore checkpoints
       - ./memory:/workspace/memory
-      # SQLcl install (host-managed via scripts/install-sqlcl.{ps1,sh})
-      - ./vendor/sqlcl:/workspace/sqlcl_files:ro
 
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/health"]

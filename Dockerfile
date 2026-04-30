@@ -37,10 +37,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.13-slim AS runtime
 
 # Java is required to run Oracle SQLcl in -mcp mode.
-# curl is required for the HEALTHCHECK probe.
+# curl is required for the HEALTHCHECK probe and the install scripts.
+# unzip is required by scripts/install-{sqlcl,instantclient}.sh.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         default-jre-headless \
         curl \
+        unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -54,23 +56,39 @@ WORKDIR /workspace
 # builder's UV_PROJECT_ENVIRONMENT or console-script shebangs break.
 COPY --from=builder --chown=app:app /workspace/.venv /workspace/.venv
 
-# Source + skill index. SQLcl is provided via the /workspace/sqlcl_files volume
-# (bind-mount your local SQLcl install or pre-bake an image that copies it in).
+# Source + skill index + install scripts. SQLcl and Oracle Instant Client are
+# downloaded into the image during build (Linux x64 binaries) — the host's
+# Windows binaries under ./vendor and ./third_party are unusable in this
+# container, so we never bind-mount them.
 COPY --chown=app:app src/     ./src/
 COPY --chown=app:app skills/  ./skills/
 COPY --chown=app:app scripts/ ./scripts/
 
-# Persistence dirs for AsyncSqliteSaver / AsyncSqliteStore + SQLcl wallet/config.
-RUN mkdir -p /workspace/memory /workspace/sqlcl_files \
-    && chown -R app:app /workspace
-VOLUME ["/workspace/memory", "/workspace/sqlcl_files"]
+# Install Linux Oracle Instant Client (thick-mode runtime) + Linux SQLcl.
+# Both scripts are idempotent and download from download.oracle.com.
+# Pin INSTANTCLIENT_VERSION here so ORACLE_CLIENT_LIB_DIR below stays in sync.
+ARG INSTANTCLIENT_VERSION=23.6.0.24.10
+ARG INSTANTCLIENT_SLUG=2360000
+ARG INSTANTCLIENT_DIRNAME=instantclient_23_6
+RUN bash /workspace/scripts/install-instantclient.sh \
+        --version "$INSTANTCLIENT_VERSION" \
+        --slug    "$INSTANTCLIENT_SLUG" \
+ && bash /workspace/scripts/install-sqlcl.sh \
+ && chown -R app:app /workspace/third_party /workspace/vendor
+
+# Persistence dir for AsyncSqliteSaver / AsyncSqliteStore.
+RUN mkdir -p /workspace/memory \
+    && chown -R app:app /workspace/memory
+VOLUME ["/workspace/memory"]
 
 ENV PATH="/workspace/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/workspace/src \
     API_WORKERS=1 \
-    SQLCL_PATH=/workspace/sqlcl_files/bin/sql
+    SQLCL_PATH=/workspace/vendor/sqlcl/bin/sql \
+    ORACLE_CLIENT_MODE=thick \
+    ORACLE_CLIENT_LIB_DIR=/workspace/third_party/instantclient_23_6
 
 USER app
 
