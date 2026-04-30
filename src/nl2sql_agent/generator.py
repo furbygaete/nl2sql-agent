@@ -1,9 +1,8 @@
-"""SSE streaming and blocking response helpers for the LangGraph agent.
+"""SSE streaming helper for the LangGraph agent.
 
-Ported from oracle-sqlcl-chat/app/generator.py with two fixes:
-  * agent_response is awaited correctly when called from a route.
-  * langsmith.@traceable is imported behind a guard so the module loads
-    without langsmith installed.
+Yields server-sent events consumed by the NiceGUI chat at /gui and the
+/api/v1/chat-stream HTTP endpoint. langsmith.@traceable is imported behind
+a guard so the module loads without langsmith installed.
 """
 from __future__ import annotations
 
@@ -123,24 +122,3 @@ async def stream_agent_response(agent: CompiledStateGraph, mensaje: UserMessage)
     logger.success(
         f"Stream finalizado para usuario {mensaje.user_id} en thread {mensaje.thread_id}"
     )
-
-
-@traceable
-async def agent_response(agent: CompiledStateGraph, mensaje: UserMessage) -> str:
-    logger.info("Procesando respuesta del agente...")
-    response = await agent.ainvoke(
-        input={"messages": [{"role": "user", "content": mensaje.message}]},
-        config={
-            "configurable": {
-                "thread_id": f"{mensaje.user_id}:{mensaje.thread_id}"
-            }
-        },
-        context={"user_id": mensaje.user_id},
-    )
-    last = response["messages"][-1]
-    if isinstance(last.content, list) and last.content:
-        first = last.content[0]
-        if isinstance(first, dict):
-            return first.get("text", str(last.content))
-        return getattr(first, "text", str(last.content))
-    return last.content

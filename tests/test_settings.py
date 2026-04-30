@@ -40,7 +40,7 @@ def test_oracle_requires_dsn_or_host_and_service():
         )
 
 
-def test_sql_repair_defaults():
+def test_default_toggles():
     s = Settings(
         openai_api_key="x",
         oracle_dsn="db:1521/xe",
@@ -48,5 +48,6 @@ def test_sql_repair_defaults():
         oracle_ro_password="pw",
     )
     assert s.sql_cure_validate_enabled is True
-    assert s.sql_repair_enabled is True
-    assert s.sql_repair_max_attempts == 1
+    assert s.chat_rate_limit_enabled is True
+    assert s.chat_rate_limit_requests == 30
+    assert s.chat_rate_limit_window_s == 60

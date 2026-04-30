@@ -25,22 +25,19 @@ class Settings(BaseSettings):
     oracle_client_config_dir: Path | None = None
 
     schema_path: Path = Path("data/schema.json")
-    # Max characters for schema block sent to the LLM (as_prompt / retrieval trim).
+    # Max characters for schema block sent to the LLM (retrieval trim).
     schema_prompt_char_budget: int = 20_000
     # When true, pick relevant tables from the question instead of sending the full catalog.
-    schema_retrieval_enabled: bool = True
     schema_retrieval_max_tables: int = 12
     schema_retrieval_fuzzy_cutoff: float = 0.42
+    # Used by tools.run_select_sql to retry once after a schema-mismatch error.
     sql_cure_validate_enabled: bool = True
-    sql_repair_enabled: bool = True
-    # User-requested policy: only one safe retry after a recoverable DB failure.
-    sql_repair_max_attempts: int = 1
 
     max_rows: int = 1000
     query_timeout_s: int = 30
-    ask_rate_limit_enabled: bool = True
-    ask_rate_limit_requests: int = 30
-    ask_rate_limit_window_s: int = 60
+    chat_rate_limit_enabled: bool = True
+    chat_rate_limit_requests: int = 30
+    chat_rate_limit_window_s: int = 60
 
     host: str = "127.0.0.1"
     port: int = 8000

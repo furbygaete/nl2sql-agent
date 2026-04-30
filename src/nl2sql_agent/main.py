@@ -5,47 +5,20 @@ import time
 from collections import defaultdict, deque
 from contextlib import AsyncExitStack, asynccontextmanager
 from threading import Lock
-from typing import Any
 
-import oracledb
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from loguru import logger
-from pydantic import BaseModel
 
-from nl2sql_agent.executor import (
-    NonSelectSqlError,
-    classify_oracle_error,
-    cure_sql_against_schema,
-    is_safe_retry_class,
-    run_select,
-)
-from nl2sql_agent.generator import agent_response, stream_agent_response
-from nl2sql_agent.llm import SqlGenerator
+from nl2sql_agent.generator import stream_agent_response
 from nl2sql_agent.mcp_bridge import (
     check_for_sqlcl,
     parse_connection_string,
     sqlcl_init_config,
 )
 from nl2sql_agent.models import UserMessage
-from nl2sql_agent.oracle_catalog import verify_question_objects_against_catalog
-from nl2sql_agent.schema_loader import SchemaContext, load_schema
 from nl2sql_agent.settings import Settings, get_settings
-
-
-class AskRequest(BaseModel):
-    question: str
-
-
-class AskResponse(BaseModel):
-    sql: str
-    columns: list[str]
-    rows: list[list[Any]]
-    row_count: int
-    elapsed_ms: int
-    """When schema retrieval is on: Oracle table names included in the LLM schema block; else null."""
-    schema_tables_in_prompt: list[str] | None = None
 
 
 class SlidingWindowRateLimiter:
@@ -78,6 +51,8 @@ def configure_oracle_client(settings: Settings) -> None:
     mode = settings.oracle_client_mode.strip().lower()
     if mode != "thick":
         return
+
+    import oracledb
 
     kwargs: dict[str, str] = {}
     if settings.oracle_client_lib_dir:
@@ -295,17 +270,10 @@ async def _build_langgraph_agent(stack: AsyncExitStack, settings: Settings):
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_oracle_client(settings)
-    schema_ctx = load_schema(
-        settings.schema_path,
-        prompt_char_budget=settings.schema_prompt_char_budget,
-    )
-    sql_generator = SqlGenerator(settings)
     app.state.settings = settings
-    app.state.schema_ctx = schema_ctx
-    app.state.sql_generator = sql_generator
-    app.state.ask_rate_limiter = SlidingWindowRateLimiter(
-        max_requests=settings.ask_rate_limit_requests,
-        window_seconds=settings.ask_rate_limit_window_s,
+    app.state.chat_rate_limiter = SlidingWindowRateLimiter(
+        max_requests=settings.chat_rate_limit_requests,
+        window_seconds=settings.chat_rate_limit_window_s,
     )
     app.state.agent = None
 
@@ -314,7 +282,7 @@ async def lifespan(app: FastAPI):
             try:
                 check_for_sqlcl(settings.sqlcl_path)
                 app.state.agent = await _build_langgraph_agent(stack, settings)
-                logger.info("LangGraph agent ready. /api/v1/chat* endpoints active.")
+                logger.info("LangGraph agent ready. /api/v1/chat-stream endpoint active.")
             except Exception as exc:
                 logger.warning(
                     f"LangGraph agent build failed; chat endpoints will return 503. "
@@ -322,8 +290,9 @@ async def lifespan(app: FastAPI):
                 )
                 app.state.agent = None
         else:
-            logger.info(
-                "SQLCL_PATH not set; LangGraph agent disabled. /ask still works."
+            logger.warning(
+                "SQLCL_PATH not set; LangGraph agent disabled. "
+                "Chat endpoints and /gui will return 503 until configured."
             )
         yield
 
@@ -343,130 +312,6 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/ask", response_model=AskResponse)
-def ask(payload: AskRequest, request: Request) -> AskResponse:
-    settings: Settings = app.state.settings
-    schema_ctx: SchemaContext = app.state.schema_ctx
-    sql_generator: SqlGenerator = app.state.sql_generator
-    ask_rate_limiter: SlidingWindowRateLimiter = app.state.ask_rate_limiter
-
-    if settings.ask_rate_limit_enabled:
-        key = _request_rate_limit_key(request)
-        retry_after = ask_rate_limiter.check(key)
-        if retry_after is not None:
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "rate_limited",
-                    "detail": "Too many /ask requests. Retry later.",
-                    "retry_after_s": retry_after,
-                },
-                headers={"Retry-After": str(retry_after)},
-            )
-
-    missing_msg = verify_question_objects_against_catalog(
-        payload.question,
-        schema_ctx.known_object_names(),
-        settings,
-    )
-    if missing_msg:
-        raise HTTPException(status_code=404, detail=missing_msg)
-
-    try:
-        sql, tables_meta = sql_generator.generate_sql(payload.question, schema_ctx)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "llm_failed", "detail": str(exc)},
-        ) from exc
-
-    retry_budget = (
-        max(0, settings.sql_repair_max_attempts)
-        if settings.sql_repair_enabled
-        else 0
-    )
-    last_non_select_exc: NonSelectSqlError | None = None
-    last_db_exc: oracledb.Error | None = None
-    last_error_class = "other"
-
-    for attempt in range(retry_budget + 1):
-        execution_sql = sql
-        if settings.sql_cure_validate_enabled:
-            try:
-                execution_sql = cure_sql_against_schema(execution_sql, schema_ctx)
-            except NonSelectSqlError as exc:
-                last_non_select_exc = exc
-                if attempt < retry_budget and settings.sql_repair_enabled:
-                    sql = sql_generator.repair_sql(
-                        payload.question,
-                        execution_sql,
-                        str(exc),
-                        schema_ctx,
-                    )
-                    continue
-                break
-
-        try:
-            result = run_select(execution_sql, settings)
-        except NonSelectSqlError as exc:
-            last_non_select_exc = exc
-            if attempt < retry_budget and settings.sql_repair_enabled:
-                sql = sql_generator.repair_sql(
-                    payload.question,
-                    execution_sql,
-                    str(exc),
-                    schema_ctx,
-                )
-                continue
-            break
-        except oracledb.Error as exc:
-            last_db_exc = exc
-            last_error_class = classify_oracle_error(exc)
-            if (
-                attempt < retry_budget
-                and settings.sql_repair_enabled
-                and is_safe_retry_class(last_error_class)
-            ):
-                sql = sql_generator.repair_sql(
-                    payload.question,
-                    execution_sql,
-                    f"{last_error_class}: {exc}",
-                    schema_ctx,
-                )
-                continue
-            break
-        else:
-            return AskResponse(
-                sql=execution_sql,
-                schema_tables_in_prompt=tables_meta,
-                **result,
-            )
-
-    if last_non_select_exc is not None:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "non_select_sql",
-                "detail": str(last_non_select_exc),
-            },
-        ) from last_non_select_exc
-
-    if last_db_exc is not None:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "db_error",
-                "class": last_error_class,
-                "detail": "Database execution failed.",
-            },
-        ) from last_db_exc
-
-    raise HTTPException(
-        status_code=500,
-        detail={"error": "unhandled_execution_path"},
-    )
-
-
 def _require_agent(request: Request):
     agent = getattr(request.app.state, "agent", None)
     if agent is None:
@@ -475,7 +320,7 @@ def _require_agent(request: Request):
             detail={
                 "error": "agent_disabled",
                 "detail": "Set SQLCL_PATH (and ANTHROPIC_API_KEY/OPENAI_API_KEY + model) "
-                "and restart to enable /api/v1/chat*.",
+                "and restart to enable /api/v1/chat-stream and /gui.",
             },
         )
     return agent
@@ -483,9 +328,9 @@ def _require_agent(request: Request):
 
 def _enforce_chat_rate_limit(request: Request, key: str) -> None:
     settings: Settings = app.state.settings
-    if not settings.ask_rate_limit_enabled:
+    if not settings.chat_rate_limit_enabled:
         return
-    retry_after = app.state.ask_rate_limiter.check(key)
+    retry_after = app.state.chat_rate_limiter.check(key)
     if retry_after is not None:
         raise HTTPException(
             status_code=429,
@@ -495,19 +340,6 @@ def _enforce_chat_rate_limit(request: Request, key: str) -> None:
                 "retry_after_s": retry_after,
             },
             headers={"Retry-After": str(retry_after)},
-        )
-
-
-@app.post("/api/v1/chat/")
-async def chat(request: Request, mensaje: UserMessage):
-    agent = _require_agent(request)
-    _enforce_chat_rate_limit(request, f"chat:{mensaje.user_id}")
-    try:
-        return {"reply": await agent_response(agent, mensaje)}
-    except Exception as exc:
-        logger.exception(f"Error procesando petición: {exc}")
-        raise HTTPException(
-            status_code=500, detail=f"Error en el motor del agente: {exc}"
         )
 
 

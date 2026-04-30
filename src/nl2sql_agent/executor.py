@@ -74,27 +74,6 @@ def validate_read_only_sql(sql: str) -> None:
             raise NonSelectSqlError("SQL contains non-read-only expressions")
 
 
-def classify_oracle_error(exc: oracledb.Error) -> str:
-    text = str(exc).upper()
-    if "ORA-00904" in text:
-        return "missing_column"
-    if "ORA-00942" in text:
-        return "missing_table"
-    if "ORA-00918" in text:
-        return "ambiguous_column"
-    if "ORA-00933" in text or "ORA-00936" in text or "ORA-00907" in text:
-        return "syntax"
-    if "ORA-01031" in text:
-        return "permission"
-    if "ORA-01013" in text or "ORA-12170" in text:
-        return "timeout"
-    return "other"
-
-
-def is_safe_retry_class(error_class: str) -> bool:
-    return error_class in {"syntax", "missing_table", "missing_column", "ambiguous_column"}
-
-
 def cure_sql_against_schema(sql: str, schema_ctx: SchemaContext) -> str:
     validate_read_only_sql(sql)
 

@@ -1,0 +1,42 @@
+# Local container testing for nl2sql-agent.
+#   docker compose up --build
+#
+# Brings up the FastAPI app on http://localhost:8000 with:
+#   - secrets from .env (OPENAI_API_KEY, ANTHROPIC_API_KEY, SQLCL_CONNECTIONS, ...)
+#   - LangGraph SQLite checkpoints persisted on the host at ./memory/
+#   - SQLcl binaries bind-mounted from ./vendor/sqlcl/ (per-machine install)
+#   - healthcheck against /health, restart on failure
+
+services:
+  nl2sql-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nl2sql-agent:local
+    container_name: nl2sql-agent
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    env_file:
+      - .env
+
+    environment:
+      API_WORKERS: "1"
+      # SQLCL_PATH is fixed inside the container; the host binary is mounted
+      # at /workspace/sqlcl_files via the volume below.
+      SQLCL_PATH: "/workspace/sqlcl_files/bin/sql"
+
+    volumes:
+      # LangGraph AsyncSqliteSaver / AsyncSqliteStore checkpoints
+      - ./memory:/workspace/memory
+      # SQLcl install (host-managed via scripts/install-sqlcl.{ps1,sh})
+      - ./vendor/sqlcl:/workspace/sqlcl_files:ro
+
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3

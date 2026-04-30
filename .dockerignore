@@ -1,0 +1,72 @@
+# --- Secrets (BLOCK ABSOLUTELY) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Python build / runtime artifacts ---
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# --- App runtime data (mounted as volumes, not baked in) ---
+memory/
+.nicegui/
+.sqlcl/
+
+# --- Heavy / per-host vendored binaries (mounted as volumes) ---
+vendor/
+third_party/
+
+# --- IDE / agent configs (host-only) ---
+.claude/
+.cursor/
+.codex/
+.opencode/
+.agent/
+.vscode/
+.idea/
+
+# --- galdr task management (host-only) ---
+.galdr/
+.galdr_template/
+
+# --- Git / VCS ---
+.git/
+.gitignore
+.gitattributes
+
+# --- Tests, docs, scratch ---
+tests/
+docs/
+temp_docs/
+temp_scripts/
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Misc ---
+*.log
+*.swp
+*.bak
+*~
+README.md
+CHANGELOG.md
+ROADMAP.md
+LICENSE
+docker-compose*.yml
+Dockerfile*
+.dockerignore
