@@ -3,7 +3,6 @@ pyproject.toml
 src/nl2sql_agent/__init__.py
 src/nl2sql_agent/executor.py
 src/nl2sql_agent/generator.py
-src/nl2sql_agent/llm.py
 src/nl2sql_agent/llm_factory.py
 src/nl2sql_agent/main.py
 src/nl2sql_agent/mcp_bridge.py
@@ -21,7 +20,6 @@ src/nl2sql_agent.egg-info/dependency_links.txt
 src/nl2sql_agent.egg-info/requires.txt
 src/nl2sql_agent.egg-info/top_level.txt
 tests/test_executor_guard.py
-tests/test_llm.py
 tests/test_oracle_catalog.py
 tests/test_rate_limiter.py
 tests/test_schema_loader.py
