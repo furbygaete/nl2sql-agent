@@ -18,7 +18,12 @@
       "Bash(echo \"\\(count\\): $\\(git ls-tree -r HEAD --name-only 2>&1)",
       "Bash(xargs '-I{}' sh -c 'size=$\\(git cat-file -s \"HEAD:{}\" 2>/dev/null\\); printf \"%10s %s\\\\n\" \"$size\" \"{}\"')",
       "Bash(git -c core.autocrlf=false commit -m ' *)",
-      "Bash(docker run *)"
+      "Bash(docker run *)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -m pytest tests/test_settings.py -q)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pytest tests/test_settings.py -q 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pytest tests/ -q 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"from nl2sql_agent.connection_store import FileConnectionStore, merge_profiles_from_env, seed_profiles_from_settings; from nl2sql_agent.mcp_bridge import parse_connection_string; from nl2sql_agent.main import activate_request_connection; from nl2sql_agent.web import init_nicegui; print\\('OK'\\)\")",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"from nl2sql_agent.settings import Settings; s = Settings\\(openai_api_key='x', db_backend='postgres', postgres_host='h', postgres_database='d', postgres_user='u', postgres_password='p'\\); print\\('backend=', s.db_backend, ' conn_store=', s.connection_store_path\\)\")"
     ]
   }
 }

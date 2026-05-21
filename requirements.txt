@@ -1,6 +1,8 @@
 fastapi
 openai
 oracledb
+psycopg[binary]
+mysql-connector-python
 pydantic
 pydantic-settings
 sqlglot

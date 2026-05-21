@@ -1,0 +1,39 @@
+{
+  "default_connection_id": "base02",
+  "profiles": [
+    {
+      "id": "postgres-default",
+      "name": "Trent Docker PostgreSQL",
+      "db_type": "postgres",
+      "oracle_dsn": "",
+      "oracle_host": "",
+      "oracle_port": 1521,
+      "oracle_service_name": "",
+      "oracle_user": "",
+      "oracle_password": "",
+      "postgres_dsn": "",
+      "postgres_host": "localhost",
+      "postgres_port": 5433,
+      "postgres_database": "knowledge_base",
+      "postgres_user": "knowledge_base",
+      "postgres_password": "knowledge_base"
+    },
+    {
+      "id": "base02",
+      "name": "base02",
+      "db_type": "oracle",
+      "oracle_dsn": "10.1.3.65:1521/pdb_9002_base_02.privatesubnet2.obsnetwork1.oraclevcn.com",
+      "oracle_host": "",
+      "oracle_port": 1521,
+      "oracle_service_name": "",
+      "oracle_user": "DUSBRID_TRANS",
+      "oracle_password": "V55hHppWaI78z7uK",
+      "postgres_dsn": "",
+      "postgres_host": "",
+      "postgres_port": 5432,
+      "postgres_database": "",
+      "postgres_user": "",
+      "postgres_password": ""
+    }
+  ]
+}

@@ -7,6 +7,8 @@ Description-Content-Type: text/markdown
 Requires-Dist: fastapi
 Requires-Dist: openai
 Requires-Dist: oracledb
+Requires-Dist: psycopg[binary]
+Requires-Dist: mysql-connector-python
 Requires-Dist: pydantic
 Requires-Dist: pydantic-settings
 Requires-Dist: sqlglot
@@ -30,7 +32,7 @@ Requires-Dist: pytest; extra == "dev"
 
 # NL2SQL Agent
 
-A **FastAPI** service that turns **natural-language questions** into **read-only Oracle SQL** through a **LangGraph** agent. The agent talks to Oracle via **SQLcl `-mcp` (stdio)** and exposes a chat UI at **`/gui/`** and a streaming JSON API at **`/api/v1/chat-stream/`**.
+A **FastAPI** service that turns **natural-language questions** into **read-only SQL** through a **LangGraph** agent. It now supports **Oracle, PostgreSQL, and MySQL** through one guarded tool contract, and optionally uses Oracle **SQLcl `-mcp` (stdio)** for richer introspection. The service exposes a chat UI at **`/gui/`** and a streaming JSON API at **`/api/v1/chat-stream/`**.
 
 ---
 
@@ -51,12 +53,12 @@ flowchart LR
   Tools -->|MCP| SQLcl[SQLcl -mcp stdio]
   SQLcl --> Oracle[(Oracle DB)]
   Tools -->|guarded| Safe[run_select_sql<br/>find_relevant_tables<br/>verify_identifier_in_catalog]
-  Safe --> Oracle
+  Safe --> DB[(Oracle / PostgreSQL / MySQL)]
   Agent --> SSE[SSE chunks: info/text/tool/tool_result/error/done]
   SSE --> U
 ```
 
-The agent has two parallel database paths and you keep them both: SQLcl-MCP gives the model rich introspection (table descriptions, sample rows, query execution), and the curated `tools.py` wrappers enforce a **strict read-only `SELECT`** guard with sqlglot-based cure-and-validate against `schema.json`.
+The agent has two parallel database paths: backend-agnostic guarded tools for execution and identifier checks on all supported databases, plus optional SQLcl-MCP for Oracle-specific introspection (table descriptions, sample rows, query execution). The curated `tools.py` wrappers enforce a **strict read-only `SELECT`** guard with sqlglot-based cure-and-validate against `schema.json`.
 
 ---
 
@@ -71,8 +73,11 @@ The agent has two parallel database paths and you keep them both: SQLcl-MCP give
 | `src/nl2sql_agent/mcp_bridge.py` | SQLcl `-mcp` discovery + saved-connection helpers |
 | `src/nl2sql_agent/tools.py` | LangChain `@tool` wrappers around the safety net |
 | `src/nl2sql_agent/skills.py` | `SkillMiddleware` + `load_skill` tool |
-| `src/nl2sql_agent/executor.py` | sqlglot SELECT-only guard, cure-and-validate, `oracledb` runner |
-| `src/nl2sql_agent/oracle_catalog.py` | `ALL_OBJECTS` lookup used by `verify_identifier_in_catalog` |
+| `src/nl2sql_agent/executor.py` | sqlglot SELECT-only guard, cure-and-validate, backend-routed execution |
+| `src/nl2sql_agent/catalog.py` | Backend router for catalog checks |
+| `src/nl2sql_agent/oracle_catalog.py` | Oracle `ALL_OBJECTS` lookup |
+| `src/nl2sql_agent/postgres_catalog.py` | PostgreSQL `information_schema` lookup |
+| `src/nl2sql_agent/mysql_catalog.py` | MySQL `information_schema` lookup |
 | `src/nl2sql_agent/schema_loader.py` | Load `schema.json`, budgets, known object names |
 | `src/nl2sql_agent/schema_retrieval.py` | Fuzzy table selection used by `find_relevant_tables` |
 | `src/nl2sql_agent/settings.py` | `pydantic-settings` → environment variables |
@@ -89,8 +94,8 @@ The agent has two parallel database paths and you keep them both: SQLcl-MCP give
 
 - **Python 3.11+** and **[uv](https://github.com/astral-sh/uv)**
 - **OpenAI API key** (`OPENAI_API_KEY`) — or `ANTHROPIC_API_KEY` for Claude
-- **Oracle read-only user** credentials used by `python-oracledb` and SQLcl
-- **Java 17+** on `PATH` — required by SQLcl
+- **Database credentials** for your selected backend (`oracle`, `postgres`, or `mysql`)
+- **Java 17+** on `PATH` — required only when using Oracle SQLcl-MCP
 
 > Oracle SQLcl is **not** a prerequisite — `scripts/install-sqlcl.{ps1,sh}` downloads it into `vendor/sqlcl/` on demand.
 
@@ -188,10 +193,13 @@ Then fill in:
 | Var | What it is |
 |-----|------------|
 | `OPENAI_API_KEY`, `OPENAI_MODEL` | LLM credentials (`OPENAI_MODEL` defaults to `gpt-4o`) |
+| `DB_BACKEND` | `oracle` (default), `postgres`, or `mysql` |
 | `ORACLE_DSN` *(or* `ORACLE_HOST` + `ORACLE_SERVICE_NAME`*)* | Database target |
 | `ORACLE_RO_USER`, `ORACLE_RO_PASSWORD` | Read-only DB user used by `python-oracledb` |
+| `POSTGRES_DSN` *(or* `POSTGRES_HOST` + `POSTGRES_DATABASE` + `POSTGRES_USER` + `POSTGRES_PASSWORD`*)* | PostgreSQL target |
+| `MYSQL_HOST` + `MYSQL_DATABASE` + `MYSQL_USER` + `MYSQL_PASSWORD` | MySQL target |
 | `ORACLE_CLIENT_MODE=thick` + `ORACLE_CLIENT_LIB_DIR` | Only if you use Instant Client / full client (typical on Windows) |
-| `SQLCL_PATH=vendor/sqlcl/bin/sql.exe` | `vendor/sqlcl/bin/sql` on macOS/Linux |
+| `SQLCL_PATH=vendor/sqlcl/bin/sql.exe` | Oracle-only optional MCP path (`vendor/sqlcl/bin/sql` on macOS/Linux) |
 | `SQLCL_USER_DIR=.sqlcl` | Keeps SQLcl's wallet inside the repo (gitignored) |
 | `SQLCL_CONNECTIONS=[main,RO_USER/RO_PASSWORD@host:1521/service]` | Saved on lifespan boot |
 | `NICEGUI_STORAGE_SECRET=<random>` | Signs per-user session storage |
@@ -321,13 +329,14 @@ Both branches resolve through `langchain.chat_models.init_chat_model`, so any mo
 
 ### Boot semantics
 
-`SQLCL_PATH` gates the whole agent stack:
+`DB_BACKEND` selects the guarded execution backend, while `SQLCL_PATH` only controls optional Oracle MCP tooling:
 
-| `SQLCL_PATH` | Outcome |
-|--------------|---------|
-| Empty (default) | Lifespan logs a warning. `/api/v1/chat-stream/` returns **HTTP 503**. NiceGUI is **not** mounted. `/health` still works. |
-| Set + valid | Lifespan builds the agent. `AsyncSqliteSaver`/`Store` files appear under `memory/`. SQLcl `-mcp` subprocess starts. NiceGUI mounts at `/gui/`. |
-| Set + invalid | Lifespan logs a warning and downgrades to "agent disabled" mode (same as empty). |
+| Condition | Outcome |
+|-----------|---------|
+| `DB_BACKEND=postgres` or `DB_BACKEND=mysql` with valid credentials | Lifespan builds the agent and serves `/api/v1/chat-stream/` + `/gui/` without SQLcl. |
+| `DB_BACKEND=oracle` + valid Oracle creds, `SQLCL_PATH` empty | Lifespan builds the agent with guarded Oracle tools only (no SQLcl MCP tools). |
+| `DB_BACKEND=oracle` + `SQLCL_PATH` valid | Lifespan builds the agent with guarded tools + SQLcl `-mcp` tools. |
+| Any backend with invalid/missing required DB credentials | Lifespan logs a warning and chat endpoints return **HTTP 503** until fixed. |
 
 ---
 
@@ -338,12 +347,17 @@ Both branches resolve through `langchain.chat_models.init_chat_model`, so any mo
 | `OPENAI_API_KEY` | Required (or set Anthropic) |
 | `OPENAI_MODEL` | Default `gpt-4o` |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Optional alternate provider; takes priority over OpenAI when set |
-| `ORACLE_DSN` | Single DSN; overrides host/port/service when set |
+| `DB_BACKEND` | Active backend: `oracle`, `postgres`, `mysql` |
+| `ORACLE_DSN` | Oracle DSN; overrides host/port/service when set |
 | `ORACLE_HOST` / `ORACLE_PORT` / `ORACLE_SERVICE_NAME` | Build DSN when `ORACLE_DSN` empty |
 | `ORACLE_RO_USER` / `ORACLE_RO_PASSWORD` | Runtime DB user |
 | `ORACLE_CLIENT_MODE` | `thick` or thin |
 | `ORACLE_CLIENT_LIB_DIR` | Thick: client libraries |
 | `ORACLE_CLIENT_CONFIG_DIR` | Thick: `tnsnames`, wallet, etc. |
+| `POSTGRES_DSN` | PostgreSQL conninfo string |
+| `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DATABASE` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | PostgreSQL split config when DSN is empty |
+| `MYSQL_DSN` | Reserved for future DSN support (split vars recommended today) |
+| `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` | MySQL split connection config |
 | `SCHEMA_PATH` | Default `data/schema.json` |
 | `SCHEMA_PROMPT_CHAR_BUDGET` | Max chars of schema text in the prompt |
 | `SCHEMA_RETRIEVAL_MAX_TABLES` | Cap tables in retrieval slice |
@@ -355,7 +369,7 @@ Both branches resolve through `langchain.chat_models.init_chat_model`, so any mo
 | `MAX_ROWS` | Cap rows returned by `run_select_sql` |
 | `QUERY_TIMEOUT_S` | Cursor timeout (seconds) |
 | `HOST` / `PORT` | Defaults for your deployment notes |
-| `SQLCL_PATH` | Absolute path to SQLcl `sql`/`sql.exe`. **Empty disables the agent entirely.** |
+| `SQLCL_PATH` | Oracle-only optional path to SQLcl `sql`/`sql.exe` for MCP tools |
 | `SQLCL_CONNECTIONS` | `[name1,user/password@host:port/service][name2,…]` — saved on lifespan boot |
 | `SQLCL_USER_DIR` | Project-local SQLcl wallet dir (recommended `.sqlcl`) |
 | `SYSTEM_PROMPT` | Top-level system prompt for the agent |

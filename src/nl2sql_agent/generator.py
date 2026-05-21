@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import openai
 from loguru import logger
 
+from .connection_store import DbConnectionProfile
 from .models import UserMessage
 
 if TYPE_CHECKING:
@@ -29,13 +30,39 @@ except Exception:  # pragma: no cover
 
 
 @traceable
-async def stream_agent_response(agent: CompiledStateGraph, mensaje: UserMessage):
+async def stream_agent_response(
+    agent: CompiledStateGraph,
+    mensaje: UserMessage,
+    chosen_profile: DbConnectionProfile | None = None,
+):
     logger.info(f"Mensaje recibido: {mensaje.message}")
+    if chosen_profile is not None:
+        yield (
+            f"data: {json.dumps({'type': 'info', 'content': f'Connection: {chosen_profile.id} ({chosen_profile.db_type})'})}\n\n"
+        )
     yield f"data: {json.dumps({'type': 'info', 'content': 'Conectado. Analizando petición...'})}\n\n"
+
+    runtime_messages: list[dict[str, str]] = []
+    if chosen_profile is not None:
+        runtime_messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Runtime database scope for this request:\n"
+                    f"- connection_id: {chosen_profile.id}\n"
+                    f"- db_type: {chosen_profile.db_type}\n"
+                    f"- target: {chosen_profile.target_display()}\n\n"
+                    "You must treat this as the active and only database scope for this request. "
+                    "Do not claim you only have Oracle access when db_type is postgres. "
+                    "Use only tools compatible with this active scope."
+                ),
+            }
+        )
+    runtime_messages.append({"role": "user", "content": mensaje.message})
 
     try:
         async for chunk, metadata in agent.astream(
-            input={"messages": [{"role": "user", "content": mensaje.message}]},
+            input={"messages": runtime_messages},
             config={
                 "configurable": {
                     "thread_id": f"{mensaje.user_id}:{mensaje.thread_id}"

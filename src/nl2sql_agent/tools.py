@@ -19,14 +19,15 @@ from typing import Any
 from langchain_core.tools import tool
 from loguru import logger
 
+from .catalog import lookup_accessible_object_names
 from .executor import (
     NonSelectSqlError,
     cure_sql_against_schema,
     run_select,
 )
-from .oracle_catalog import lookup_accessible_object_names
 from .schema_loader import SchemaContext, load_schema
 from .schema_retrieval import build_llm_schema_prompt
+from .runtime_connection import get_runtime_connection
 from .settings import Settings, get_settings
 
 
@@ -40,7 +41,11 @@ def _schema_context() -> SchemaContext:
 
 
 def _settings() -> Settings:
-    return get_settings()
+    base = get_settings()
+    profile = get_runtime_connection()
+    if profile is None:
+        return base
+    return profile.apply_to_settings(base)
 
 
 def _coerce_cell(value: Any) -> Any:
@@ -57,10 +62,10 @@ def _coerce_cell(value: Any) -> Any:
 
 
 @tool
-def run_select_sql(sql: str) -> dict[str, Any]:
-    """Execute a read-only Oracle SELECT and return columns + rows.
+async def run_select_sql(sql: str) -> dict[str, Any]:
+    """Execute a read-only SQL SELECT and return columns + rows.
 
-    The SQL is validated with sqlglot (Oracle dialect) and refused if it
+    The SQL is validated with sqlglot (active backend dialect) and refused if it
     contains any DML/DDL/PLSQL keywords. Rows are capped by MAX_ROWS and
     timed out by QUERY_TIMEOUT_S. On a recoverable schema mismatch the
     cure-and-validate step retries once against schema.json metadata.
@@ -82,7 +87,9 @@ def run_select_sql(sql: str) -> dict[str, Any]:
         if not settings.sql_cure_validate_enabled:
             raise
         try:
-            cured = cure_sql_against_schema(sql, _schema_context())
+            cured = cure_sql_against_schema(
+                sql, _schema_context(), dialect=settings.sqlglot_dialect
+            )
         except Exception as cure_exc:
             logger.warning(f"cure_sql_against_schema failed: {cure_exc}")
             raise
@@ -99,7 +106,7 @@ def run_select_sql(sql: str) -> dict[str, Any]:
 
 
 @tool
-def find_relevant_tables(question: str, k: int = 8) -> dict[str, Any]:
+async def find_relevant_tables(question: str, k: int = 8) -> dict[str, Any]:
     """Pick the most relevant tables from schema.json for a natural-language question.
 
     Uses fuzzy matching on table names + FK neighbour expansion + entity hints.
@@ -126,8 +133,8 @@ def find_relevant_tables(question: str, k: int = 8) -> dict[str, Any]:
 
 
 @tool
-def verify_identifier_in_catalog(name: str) -> dict[str, Any]:
-    """Check whether a table/view/MV name exists in Oracle's ALL_OBJECTS.
+async def verify_identifier_in_catalog(name: str) -> dict[str, Any]:
+    """Check whether a table/view name exists in the active backend catalog.
 
     Useful when the model is uncertain whether a candidate name is a real
     object the read-only user can see.

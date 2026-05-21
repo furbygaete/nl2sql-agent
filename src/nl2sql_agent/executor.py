@@ -2,7 +2,6 @@ import re
 import time
 from typing import Any
 
-import oracledb
 from sqlglot import exp, parse, parse_one
 
 from nl2sql_agent.schema_loader import SchemaContext
@@ -49,7 +48,7 @@ class SqlCureError(NonSelectSqlError):
     """Raised when SQL cannot be validated/cured against schema metadata."""
 
 
-def validate_read_only_sql(sql: str) -> None:
+def validate_read_only_sql(sql: str, *, dialect: str = "oracle") -> None:
     normalized = sql.strip()
     if not normalized:
         raise NonSelectSqlError("SQL cannot be empty")
@@ -58,9 +57,9 @@ def validate_read_only_sql(sql: str) -> None:
         raise NonSelectSqlError("SQL contains forbidden write/ddl/procedural keywords")
 
     try:
-        statements = parse(normalized, read="oracle")
+        statements = parse(normalized, read=dialect)
     except Exception as exc:
-        raise NonSelectSqlError(f"SQL parse failed for Oracle dialect: {exc}") from exc
+        raise NonSelectSqlError(f"SQL parse failed for dialect '{dialect}': {exc}") from exc
 
     if len(statements) != 1:
         raise NonSelectSqlError("Only one SQL statement is allowed")
@@ -74,13 +73,13 @@ def validate_read_only_sql(sql: str) -> None:
             raise NonSelectSqlError("SQL contains non-read-only expressions")
 
 
-def cure_sql_against_schema(sql: str, schema_ctx: SchemaContext) -> str:
-    validate_read_only_sql(sql)
+def cure_sql_against_schema(sql: str, schema_ctx: SchemaContext, *, dialect: str = "oracle") -> str:
+    validate_read_only_sql(sql, dialect=dialect)
 
     try:
-        parsed = parse_one(sql, read="oracle")
+        parsed = parse_one(sql, read=dialect)
     except Exception as exc:  # pragma: no cover - exercised through main repair loop
-        raise SqlCureError(f"SQL parse failed for Oracle dialect: {exc}") from exc
+        raise SqlCureError(f"SQL parse failed for dialect '{dialect}': {exc}") from exc
 
     known_objects = schema_ctx.known_object_names()
     table_columns = _table_columns_map(schema_ctx.raw_schema)
@@ -141,8 +140,8 @@ def cure_sql_against_schema(sql: str, schema_ctx: SchemaContext) -> str:
             raise SqlCureError(f"Unknown column '{col_name}' in generated SQL")
         column.set("this", exp.to_identifier(fixed_col))
 
-    cured = parsed.sql(dialect="oracle")
-    validate_read_only_sql(cured)
+    cured = parsed.sql(dialect=dialect)
+    validate_read_only_sql(cured, dialect=dialect)
     return cured
 
 
@@ -179,8 +178,8 @@ def _best_identifier(name: str, allowed: set[str], *, cutoff: float = 0.78) -> s
     return matches[0]
 
 
-def run_select(sql: str, settings: Settings) -> dict[str, Any]:
-    validate_read_only_sql(sql)
+def _run_select_oracle(sql: str, settings: Settings) -> dict[str, Any]:
+    import oracledb
 
     start = time.perf_counter()
     connection = oracledb.connect(
@@ -205,3 +204,69 @@ def run_select(sql: str, settings: Settings) -> dict[str, Any]:
         "row_count": len(rows),
         "elapsed_ms": elapsed_ms,
     }
+
+
+def _run_select_postgres(sql: str, settings: Settings) -> dict[str, Any]:
+    import psycopg
+
+    start = time.perf_counter()
+    connection = psycopg.connect(settings.resolved_postgres_dsn)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f"SET statement_timeout = {settings.query_timeout_s * 1000}")
+            cursor.execute(sql)
+            rows = cursor.fetchmany(settings.max_rows)
+            columns = [desc.name for desc in cursor.description or []]
+    finally:
+        connection.close()
+
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+    return {
+        "columns": columns,
+        "rows": rows,
+        "row_count": len(rows),
+        "elapsed_ms": elapsed_ms,
+    }
+
+
+def _run_select_mysql(sql: str, settings: Settings) -> dict[str, Any]:
+    import mysql.connector
+
+    start = time.perf_counter()
+    kwargs = settings.mysql_connect_kwargs.copy()
+    dsn = kwargs.pop("dsn", "")
+    if dsn:
+        raise ValueError(
+            "MYSQL_DSN is not supported by mysql-connector-python in this build. "
+            "Use MYSQL_HOST, MYSQL_PORT, MYSQL_DATABASE, MYSQL_USER, MYSQL_PASSWORD."
+        )
+    else:
+        connection = mysql.connector.connect(**kwargs)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(f"SET SESSION max_execution_time = {settings.query_timeout_s * 1000}")
+            cursor.execute(sql)
+            rows = cursor.fetchmany(settings.max_rows)
+            columns = [desc[0] for desc in cursor.description or []]
+    finally:
+        connection.close()
+
+    elapsed_ms = int((time.perf_counter() - start) * 1000)
+    return {
+        "columns": columns,
+        "rows": rows,
+        "row_count": len(rows),
+        "elapsed_ms": elapsed_ms,
+    }
+
+
+def run_select(sql: str, settings: Settings) -> dict[str, Any]:
+    dialect = settings.sqlglot_dialect
+    validate_read_only_sql(sql, dialect=dialect)
+
+    backend = settings.db_backend.strip().lower()
+    if backend == "postgres":
+        return _run_select_postgres(sql, settings)
+    if backend == "mysql":
+        return _run_select_mysql(sql, settings)
+    return _run_select_oracle(sql, settings)
