@@ -1,28 +1,68 @@
-"""NiceGUI chat interface mounted at /gui.
-
-Modernized UI per docs/UI_MODERNIZATION.md:
-- Token-based design system (Light / Auto / Dark) via :root + .body--dark
-- Sidebar (threads + theme switcher) + topbar + centered chat + pill composer
-- Empty state with prefill suggestions, 3-dot thinking indicator
-- Inline SVG icons, ARIA labels, focus halos, mobile drawer < 768 px
-
-Preserves the SSE streaming contract from generator.stream_agent_response
-(types: info, text, tool, tool_result, error, done) and the
-app.storage.user keys used previously (user_id, threads, current_thread).
-"""
+"""NiceGUI chat interface mounted at `/gui`."""
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 from loguru import logger
 from nicegui import app, ui
 
+from .charts import parse_tabular_tool_result as _parse_tabular_tool_result
 from .connection_store import DbConnectionProfile
 from .generator import stream_agent_response
 from .mcp_bridge import sqlcl_init_config
 from .models import UserMessage
 from .runtime_connection import reset_runtime_connection, set_runtime_connection
+from .web_constants import (
+    DEFAULT_THREAD as _DEFAULT_THREAD,
+    ICON_AUTO as _ICON_AUTO,
+    ICON_BRAND as _ICON_BRAND,
+    ICON_DB as _ICON_DB,
+    ICON_MENU as _ICON_MENU,
+    ICON_MOON as _ICON_MOON,
+    ICON_PLUS as _ICON_PLUS,
+    ICON_SEND as _ICON_SEND,
+    ICON_SUN as _ICON_SUN,
+    ICON_TRASH as _ICON_TRASH,
+    ICON_X as _ICON_X,
+    SUGGESTIONS as _SUGGESTIONS,
+)
+from .web_exports import (
+    build_csv_text as _build_csv_text,
+    build_pdf_bytes as _build_pdf_bytes,
+    build_xlsx_bytes as _build_xlsx_bytes,
+)
+from .web_formatting import apply_theme as _apply_theme, escape as _escape
+from .web_history import (
+    get_transcript as _get_transcript,
+    render_bot_bubble as _render_bot_bubble,
+    render_user_bubble as _render_user_bubble,
+    save_transcript as _save_transcript,
+)
+from .web_stream import (
+    attach_export_download_handlers as _attach_export_download_handlers,
+    handle_image_event as _handle_image_event,
+    handle_tool_result_event as _handle_tool_result_event,
+)
+from .web_utils import slugify as _slugify
+
+_DOWNLOAD_INTENT_RE = re.compile(
+    r"\b(download|export|csv|xlsx|excel|pdf|file)\b",
+    re.IGNORECASE,
+)
+_CHART_INTENT_RE = re.compile(
+    r"\b(chart|graph|plot|visuali[sz](e|ation)|image|diagram)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_download_output(message: str) -> bool:
+    return bool(_DOWNLOAD_INTENT_RE.search(message or ""))
+
+
+def _wants_chart_output(message: str) -> bool:
+    return bool(_CHART_INTENT_RE.search(message or ""))
 
 
 _HEAD_HTML = """
@@ -509,6 +549,25 @@ code, kbd, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; 
   font-size: 12.5px;
   margin: 8px 0;
 }
+.chart-image-wrap {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.chart-image-wrap img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.chart-caption {
+  margin-top: 6px;
+  color: var(--text-3);
+  font-size: 12px;
+}
 
 /* Thinking indicator */
 .thinking {
@@ -657,28 +716,6 @@ code, kbd, pre, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; 
 }
 </style>
 """
-
-# Inline SVG icons (single stroke width, currentColor — recolor with text).
-_ICON_PLUS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-_ICON_MENU = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>'
-_ICON_TRASH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>'
-_ICON_X = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>'
-_ICON_SUN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>'
-_ICON_MOON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
-_ICON_AUTO = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>'
-_ICON_SEND = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>'
-_ICON_DB = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>'
-_ICON_BRAND = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h10M4 17h16"/><circle cx="19" cy="12" r="2"/></svg>'
-
-_DEFAULT_THREAD = "First Conversation"
-
-_SUGGESTIONS = [
-    "List the 10 most recently hired employees.",
-    "Show all tables in the schema and their row counts.",
-    "What columns does the EMPLOYEES table have?",
-    "Top 5 departments by total salary.",
-]
-
 
 def init_nicegui(fastapi_state) -> None:
     @ui.page("/")
@@ -937,12 +974,6 @@ def init_nicegui(fastapi_state) -> None:
             )
             label = selected.get("name", connection_id) if selected else connection_id
             ui.notify(f"Selected connection: {label}", type="info")
-
-        def _slugify(value: str) -> str:
-            text = "".join(ch.lower() if ch.isalnum() else "-" for ch in value.strip())
-            while "--" in text:
-                text = text.replace("--", "-")
-            return text.strip("-")
 
         def _reload_profiles(connection_doc) -> None:
             active = getattr(fastapi_state.state, "active_connection", None)
@@ -1330,31 +1361,10 @@ def init_nicegui(fastapi_state) -> None:
         def show_empty(show: bool) -> None:
             empty_container.style(f"display: {'flex' if show else 'none'};")
 
-        def _get_transcript(tid: str) -> list[dict]:
-            messages = app.storage.user.setdefault("thread_messages", {})
-            return messages.setdefault(tid, [])
-
-        def _save_transcript(tid: str, transcript: list[dict]) -> None:
-            messages = app.storage.user.setdefault("thread_messages", {})
-            messages[tid] = transcript
-            app.storage.user["thread_messages"] = messages
-
-        def _render_user_bubble(text: str) -> None:
-            with chat_box:
-                with ui.element("div").classes("msg user"):
-                    with ui.element("div").classes("bubble"):
-                        ui.html(f"<span>{_escape(text)}</span>")
-
-        def _render_bot_bubble(markdown_text: str) -> None:
-            with chat_box:
-                with ui.element("div").classes("msg bot"):
-                    with ui.element("div").classes("bubble"):
-                        ui.markdown(markdown_text)
-
         def render_chat_history() -> None:
             chat_box.clear()
             tid = app.storage.user.get("current_thread", "")
-            transcript = _get_transcript(tid)
+            transcript = _get_transcript(app.storage.user, tid)
             if not transcript:
                 show_empty(True)
                 return
@@ -1363,9 +1373,9 @@ def init_nicegui(fastapi_state) -> None:
                 role = entry.get("role")
                 content = entry.get("content", "")
                 if role == "user":
-                    _render_user_bubble(content)
+                    _render_user_bubble(chat_box, content, _escape)
                 else:
-                    _render_bot_bubble(content)
+                    _render_bot_bubble(chat_box, content)
             scroll_area.scroll_to(percent=1.0)
 
         def _connection_options() -> dict[str, str]:
@@ -1401,7 +1411,7 @@ def init_nicegui(fastapi_state) -> None:
             app.storage.user["current_thread"] = new_id
             _set_thread_connection(new_id, chosen_connection)
             app.storage.user["selected_connection"] = chosen_connection
-            _save_transcript(new_id, [])
+            _save_transcript(app.storage.user, new_id, [])
             render_threads()
             render_connections(force=True)
             render_chat_history()
@@ -1436,7 +1446,7 @@ def init_nicegui(fastapi_state) -> None:
                 threads.append(_DEFAULT_THREAD)
                 app.storage.user["threads"] = threads
                 app.storage.user["current_thread"] = _DEFAULT_THREAD
-                _save_transcript(_DEFAULT_THREAD, [])
+                _save_transcript(app.storage.user, _DEFAULT_THREAD, [])
                 _set_thread_connection(_DEFAULT_THREAD, app.storage.user.get("selected_connection") or "")
             elif current == tid:
                 app.storage.user["current_thread"] = threads[0]
@@ -1475,14 +1485,27 @@ def init_nicegui(fastapi_state) -> None:
             show_empty(False)
 
             send_thread_id = app.storage.user["current_thread"]
-            transcript = _get_transcript(send_thread_id)
+            transcript = _get_transcript(app.storage.user, send_thread_id)
             transcript.append({"role": "user", "content": texto})
-            _save_transcript(send_thread_id, transcript)
+            _save_transcript(app.storage.user, send_thread_id, transcript)
 
             full_response = ""
             response_md = None
             thinking_el = None
             label_el = None
+            received_image = False
+            allow_download_output = _wants_download_output(texto)
+            allow_chart_output = _wants_chart_output(texto)
+            export_state = {
+                "csv_text": "",
+                "xlsx_bytes": b"",
+                "pdf_bytes": b"",
+                "filename_base": "query-results",
+            }
+            csv_download_wrap = None
+            csv_download_btn = None
+            xlsx_download_btn = None
+            pdf_download_btn = None
 
             with chat_box:
                 user_msg = ui.element("div").classes("msg user")
@@ -1506,6 +1529,18 @@ def init_nicegui(fastapi_state) -> None:
                         bubble_el = ui.element("div").classes("bubble").style("display: none;")
                         with bubble_el:
                             response_md = ui.markdown("")
+                        if allow_download_output:
+                            csv_download_wrap = ui.element("div").style("display: none;")
+                            with csv_download_wrap:
+                                csv_download_btn = ui.button("Download CSV").props(
+                                    "dense flat color=primary icon=download"
+                                )
+                                xlsx_download_btn = ui.button("Download XLSX").props(
+                                    "dense flat color=primary icon=grid_on"
+                                )
+                                pdf_download_btn = ui.button("Download PDF").props(
+                                    "dense flat color=primary icon=picture_as_pdf"
+                                )
 
             scroll_area.scroll_to(percent=1.0)
 
@@ -1526,6 +1561,14 @@ def init_nicegui(fastapi_state) -> None:
                 runtime_token = set_runtime_connection(chosen_profile)
 
                 tool_state = {"name": None, "count": 1}
+
+                if allow_download_output:
+                    _attach_export_download_handlers(
+                        csv_download_btn=csv_download_btn,
+                        xlsx_download_btn=xlsx_download_btn,
+                        pdf_download_btn=pdf_download_btn,
+                        export_state=export_state,
+                    )
 
                 async for chunk_str in stream_agent_response(
                     fastapi_state.state.agent, usuario_obj, chosen_profile
@@ -1567,6 +1610,29 @@ def init_nicegui(fastapi_state) -> None:
                         response_md.set_content(full_response)
                         scroll_area.scroll_to(percent=1.0)
 
+                    elif dtype == "tool_result":
+                        if allow_download_output:
+                            _handle_tool_result_event(
+                                content=data.get("content", ""),
+                                csv_download_wrap=csv_download_wrap,
+                                export_state=export_state,
+                                parse_tabular_tool_result=_parse_tabular_tool_result,
+                                build_csv_text=_build_csv_text,
+                                build_xlsx_bytes=_build_xlsx_bytes,
+                                build_pdf_bytes=_build_pdf_bytes,
+                                filename_seed=f"query-results-{uuid.uuid4().hex[:8]}",
+                            )
+
+                    elif dtype == "image":
+                        if allow_chart_output:
+                            received_image = _handle_image_event(
+                                data=data,
+                                bot_inner=bot_inner,
+                                thinking_el=thinking_el,
+                                scroll_area=scroll_area,
+                                escape=_escape,
+                            ) or received_image
+
                     elif dtype == "error":
                         thinking_el.style("display: none;")
                         friendly = data.get("content") or "An error occurred while contacting the model."
@@ -1599,7 +1665,7 @@ def init_nicegui(fastapi_state) -> None:
                     reset_runtime_connection(runtime_token)
                 if thinking_el is not None:
                     thinking_el.style("display: none;")
-                if not full_response and response_md is not None:
+                if not full_response and not received_image and response_md is not None:
                     bubble_el.style("display: block;")
                     response_md.set_content(
                         "_(no textual response — check the server logs "
@@ -1607,7 +1673,7 @@ def init_nicegui(fastapi_state) -> None:
                     )
                 if full_response:
                     transcript.append({"role": "bot", "content": full_response})
-                    _save_transcript(send_thread_id, transcript)
+                    _save_transcript(app.storage.user, send_thread_id, transcript)
                 local_state["is_processing"] = False
                 msg_input.enable()
                 send_btn.props(remove="disabled")
@@ -1655,19 +1721,3 @@ def init_nicegui(fastapi_state) -> None:
         ui.timer(3.0, render_connections)
 
 
-def _apply_theme(dark, mode: str) -> None:
-    if mode == "dark":
-        dark.value = True
-    elif mode == "light":
-        dark.value = False
-    else:
-        dark.value = None
-
-
-def _escape(text: str) -> str:
-    return (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )

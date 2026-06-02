@@ -21,4 +21,6 @@ nicegui==3.10.0
 aiosqlite==0.22.1
 deepagents==0.5.3
 loguru==0.7.3
+openpyxl
+reportlab
 anyio

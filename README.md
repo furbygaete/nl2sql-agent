@@ -22,13 +22,13 @@ flowchart LR
   SQLcl --> Oracle[(Oracle DB)]
   Tools -->|guarded| Safe[run_select_sql<br/>find_relevant_tables<br/>verify_identifier_in_catalog]
   Safe --> DB[(Oracle / PostgreSQL / MySQL)]
-  Agent --> SSE[SSE chunks: info/text/tool/tool_result/error/done]
+  Agent --> SSE[SSE chunks: info/text/tool/tool_result/image/error/done]
   SSE --> U
 ```
 
 The agent has two parallel database paths: backend-agnostic guarded tools for execution and identifier checks on all supported databases, plus optional SQLcl-MCP for Oracle-specific introspection (table descriptions, sample rows, query execution). The curated `tools.py` wrappers enforce a **strict read-only `SELECT`** guard with sqlglot-based cure-and-validate against `schema.json`.
 
-In the `/gui/` sidebar, saved connection profiles (Oracle/Postgres) render as a selectable list. Use **Admin connections** in the sidebar footer to create/update/delete profiles in `data/connections.json` (or `CONNECTION_STORE_PATH`). The selected profile is sent with each message; Oracle profiles also trigger SQLcl MCP `connect` switching before streaming.
+In the `/gui/` sidebar, saved connection profiles (Oracle/Postgres) render as a selectable list. Use **Admin connections** in the sidebar footer to create/update/delete profiles in `data/connections.json` (or `CONNECTION_STORE_PATH`). The selected profile is sent with each message; Oracle profiles also trigger SQLcl MCP `connect` switching before streaming. Query tool results in the chat bubble can be exported directly as **CSV**, **XLSX**, or **PDF**.
 
 ---
 
@@ -39,6 +39,7 @@ In the `/gui/` sidebar, saved connection profiles (Oracle/Postgres) render as a 
 | `src/nl2sql_agent/main.py` | FastAPI app, `/health`, `/api/v1/chat-stream/`, lifespan, NiceGUI mount |
 | `src/nl2sql_agent/web.py` | NiceGUI chat page mounted at `/gui` |
 | `src/nl2sql_agent/generator.py` | SSE streamer wrapping `agent.astream(stream_mode="messages", ...)` |
+| `src/nl2sql_agent/charts.py` | Deterministic chart parser/renderer for tabular tool results |
 | `src/nl2sql_agent/llm_factory.py` | Multi-provider chat-model factory (OpenAI / Anthropic) |
 | `src/nl2sql_agent/mcp_bridge.py` | SQLcl `-mcp` discovery + saved-connection helpers |
 | `src/nl2sql_agent/tools.py` | LangChain `@tool` wrappers around the safety net |
@@ -246,6 +247,7 @@ Each chunk is `data: {json}\n\n`, with one of these `type` fields:
 | `text` | Incremental assistant token | Append to bubble |
 | `tool` | `{tools: [...], content: ...}` | Show "Calling: X" chip |
 | `tool_result` | Raw tool output | Optional inline render |
+| `image` | `{mime, data(base64), spec}` | Render generated chart preview |
 | `error` | `{content, kind?, detail?}` | Hide spinner, show toast |
 | `done` | Stream terminator | Re-enable input |
 
@@ -279,6 +281,13 @@ The MCP toolset is concatenated with the **guarded executor wrappers** in [src/n
 | `run_select_sql(sql)` | `executor.run_select` + `cure_sql_against_schema` | Single-statement read-only SELECTs only; auto-corrects identifier typos against `schema.json` |
 | `find_relevant_tables(question, k)` | `schema_retrieval.build_llm_schema_prompt` | Fuzzy-picks the most relevant tables + FK neighbours and returns a ready-made `TABLE … (cols)` block |
 | `verify_identifier_in_catalog(name)` | `oracle_catalog.lookup_accessible_object_names` | Confirms the object exists in `ALL_OBJECTS` for the read-only user |
+| `get_package_source(name, owner?, max_lines?)` | `ALL_SOURCE` | Reads `PACKAGE` and `PACKAGE BODY` source text for reasoning/debugging |
+| `get_function_source(name, owner?, max_lines?)` | `ALL_SOURCE` | Reads standalone function source text |
+| `get_procedure_source(name, owner?, max_lines?)` | `ALL_SOURCE` | Reads standalone procedure source text |
+| `get_view_definition(name, owner?)` | `ALL_VIEWS` | Returns view query definitions |
+| `get_materialized_view_definition(name, owner?)` | `ALL_MVIEWS` | Returns materialized-view query definitions |
+
+Charts and download buttons are intent-gated in `/gui`: chart images are emitted/rendered only when the user explicitly asks for a chart/graph/image, and export buttons (`CSV`, `XLSX`, `PDF`) are shown only when the user explicitly asks to download/export a file.
 
 So the agent uses SQLcl MCP **and** the curated safety net side by side — the SELECT-only guard, sqlglot cure-and-validate, and catalog check stay on the hot path even when the model calls SQLcl directly.
 

@@ -21,6 +21,9 @@ aiosqlite==0.22.1
 deepagents==0.5.3
 loguru==0.7.3
 anyio
+matplotlib>=3.10.9
+openpyxl>=3.1.5
+reportlab>=4.5.1
 
 [dev]
 pytest

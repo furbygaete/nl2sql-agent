@@ -1,20 +1,26 @@
 """LangChain @tool wrappers around the existing safety net.
 
-Exposes three tools to the LangGraph agent so it can stay inside the guarded
+Exposes read-only tools to the LangGraph agent so it can stay inside the guarded
 read-only path even when SQLcl-MCP tools are also available:
 
 - run_select_sql(sql)            — sqlglot validation + SELECT-only guard
 - find_relevant_tables(question) — fuzzy table/FK-neighbour selection
 - verify_identifier_in_catalog   — ALL_OBJECTS existence check
+- get_package_source             — PACKAGE / PACKAGE BODY text from ALL_SOURCE
+- get_function_source            — FUNCTION text from ALL_SOURCE
+- get_procedure_source           — PROCEDURE text from ALL_SOURCE
+- get_view_definition            — VIEW query text from ALL_VIEWS
+- get_materialized_view_definition — MV query text from ALL_MVIEWS
 
 The tools read settings + schema lazily so import-time has no Oracle deps.
 """
 from __future__ import annotations
 
 import datetime as _dt
+import re
 from decimal import Decimal
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.tools import tool
 from loguru import logger
@@ -29,6 +35,8 @@ from .schema_loader import SchemaContext, load_schema
 from .schema_retrieval import build_llm_schema_prompt
 from .runtime_connection import get_runtime_connection
 from .settings import Settings, get_settings
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]*$")
 
 
 @lru_cache(maxsize=1)
@@ -59,6 +67,56 @@ def _coerce_cell(value: Any) -> Any:
     if isinstance(value, (_dt.datetime, _dt.date)):
         return value.isoformat()
     return str(value)
+
+
+def _normalize_identifier(value: str, *, field_name: str) -> str:
+    normalized = (value or "").strip().upper()
+    if not normalized:
+        raise ValueError(f"{field_name} cannot be empty")
+    if not _IDENTIFIER_RE.fullmatch(normalized):
+        raise ValueError(
+            f"Invalid {field_name!r}. Use an unquoted Oracle identifier "
+            "(letters, numbers, _, $, #)."
+        )
+    return normalized
+
+
+def _owner_filter_sql(owner: str | None) -> str:
+    if owner:
+        owner_name = _normalize_identifier(owner, field_name="owner")
+        return f"OWNER = '{owner_name}'"
+    return "1=1"
+
+
+def _format_source_lines(rows: list[list[Any]], *, max_lines: int) -> dict[str, Any]:
+    total = len(rows)
+    limited_rows = rows[:max_lines]
+    source_lines = []
+    for row in limited_rows:
+        if len(row) < 4:
+            continue
+        source_lines.append(
+            {
+                "owner": row[0],
+                "name": row[1],
+                "type": row[2],
+                "line": row[3],
+                "text": row[4] if len(row) > 4 else "",
+            }
+        )
+    text = "".join((line.get("text") or "") for line in source_lines)
+    return {
+        "source_lines": source_lines,
+        "source_text": text,
+        "line_count": total,
+        "returned_lines": len(source_lines),
+        "truncated": total > max_lines,
+    }
+
+
+def _run_catalog_select(sql: str) -> dict[str, Any]:
+    settings = _settings()
+    return run_select(sql, settings)
 
 
 @tool
@@ -151,4 +209,176 @@ async def verify_identifier_in_catalog(name: str) -> dict[str, Any]:
     return {"name": upper, "exists": upper in found}
 
 
-AGENT_TOOLS = [run_select_sql, find_relevant_tables, verify_identifier_in_catalog]
+@tool
+async def get_package_source(
+    name: str,
+    owner: str | None = None,
+    max_lines: int = 1200,
+) -> dict[str, Any]:
+    """Fetch Oracle package source text from ALL_SOURCE.
+
+    Args:
+        name: Package name (unquoted Oracle identifier).
+        owner: Optional owner/schema filter.
+        max_lines: Maximum source lines to return.
+
+    Returns:
+        dict containing metadata plus `source_lines` and concatenated `source_text`.
+    """
+    package_name = _normalize_identifier(name, field_name="name")
+    limit = max(1, min(int(max_lines), 5000))
+    owner_filter = _owner_filter_sql(owner)
+    sql = f"""
+SELECT OWNER, NAME, TYPE, LINE, TEXT
+  FROM ALL_SOURCE
+ WHERE {owner_filter}
+   AND NAME = '{package_name}'
+   AND TYPE IN ('PACKAGE', 'PACKAGE BODY')
+ ORDER BY OWNER, TYPE, LINE
+"""
+    result = _run_catalog_select(sql)
+    payload = _format_source_lines(result["rows"], max_lines=limit)
+    payload.update(
+        {
+            "name": package_name,
+            "owner": _normalize_identifier(owner, field_name="owner") if owner else None,
+            "object_types": ["PACKAGE", "PACKAGE BODY"],
+        }
+    )
+    return payload
+
+
+@tool
+async def get_function_source(
+    name: str,
+    owner: str | None = None,
+    max_lines: int = 1200,
+) -> dict[str, Any]:
+    """Fetch Oracle function source text from ALL_SOURCE."""
+    function_name = _normalize_identifier(name, field_name="name")
+    limit = max(1, min(int(max_lines), 5000))
+    owner_filter = _owner_filter_sql(owner)
+    sql = f"""
+SELECT OWNER, NAME, TYPE, LINE, TEXT
+  FROM ALL_SOURCE
+ WHERE {owner_filter}
+   AND NAME = '{function_name}'
+   AND TYPE = 'FUNCTION'
+ ORDER BY OWNER, LINE
+"""
+    result = _run_catalog_select(sql)
+    payload = _format_source_lines(result["rows"], max_lines=limit)
+    payload.update(
+        {
+            "name": function_name,
+            "owner": _normalize_identifier(owner, field_name="owner") if owner else None,
+            "object_types": ["FUNCTION"],
+        }
+    )
+    return payload
+
+
+@tool
+async def get_procedure_source(
+    name: str,
+    owner: str | None = None,
+    max_lines: int = 1200,
+) -> dict[str, Any]:
+    """Fetch Oracle procedure source text from ALL_SOURCE."""
+    procedure_name = _normalize_identifier(name, field_name="name")
+    limit = max(1, min(int(max_lines), 5000))
+    owner_filter = _owner_filter_sql(owner)
+    sql = f"""
+SELECT OWNER, NAME, TYPE, LINE, TEXT
+  FROM ALL_SOURCE
+ WHERE {owner_filter}
+   AND NAME = '{procedure_name}'
+   AND TYPE = 'PROCEDURE'
+ ORDER BY OWNER, LINE
+"""
+    result = _run_catalog_select(sql)
+    payload = _format_source_lines(result["rows"], max_lines=limit)
+    payload.update(
+        {
+            "name": procedure_name,
+            "owner": _normalize_identifier(owner, field_name="owner") if owner else None,
+            "object_types": ["PROCEDURE"],
+        }
+    )
+    return payload
+
+
+def _fetch_view_or_mview_definition(
+    *,
+    name: str,
+    owner: str | None,
+    object_type: Literal["VIEW", "MATERIALIZED VIEW"],
+) -> dict[str, Any]:
+    object_name = _normalize_identifier(name, field_name="name")
+    owner_filter = _owner_filter_sql(owner)
+    if object_type == "VIEW":
+        sql = f"""
+SELECT OWNER, VIEW_NAME AS NAME, TEXT AS QUERY_TEXT
+  FROM ALL_VIEWS
+ WHERE {owner_filter}
+   AND VIEW_NAME = '{object_name}'
+ ORDER BY OWNER
+"""
+    else:
+        sql = f"""
+SELECT OWNER, MVIEW_NAME AS NAME, QUERY AS QUERY_TEXT
+  FROM ALL_MVIEWS
+ WHERE {owner_filter}
+   AND MVIEW_NAME = '{object_name}'
+ ORDER BY OWNER
+"""
+    result = _run_catalog_select(sql)
+    rows = result["rows"]
+    definitions = []
+    for row in rows:
+        if len(row) < 3:
+            continue
+        definitions.append(
+            {
+                "owner": row[0],
+                "name": row[1],
+                "query_text": row[2] or "",
+            }
+        )
+    return {
+        "name": object_name,
+        "owner": _normalize_identifier(owner, field_name="owner") if owner else None,
+        "object_type": object_type,
+        "definitions": definitions,
+        "count": len(definitions),
+    }
+
+
+@tool
+async def get_view_definition(name: str, owner: str | None = None) -> dict[str, Any]:
+    """Fetch Oracle view query text from ALL_VIEWS."""
+    return _fetch_view_or_mview_definition(name=name, owner=owner, object_type="VIEW")
+
+
+@tool
+async def get_materialized_view_definition(
+    name: str, owner: str | None = None
+) -> dict[str, Any]:
+    """Fetch Oracle materialized-view query text from ALL_MVIEWS."""
+    return _fetch_view_or_mview_definition(
+        name=name,
+        owner=owner,
+        object_type="MATERIALIZED VIEW",
+    )
+
+
+AGENT_TOOLS = [
+    run_select_sql,
+    find_relevant_tables,
+    verify_identifier_in_catalog,
+    get_package_source,
+    get_function_source,
+    get_procedure_source,
+    get_view_definition,
+    get_materialized_view_definition,
+]

@@ -2,6 +2,8 @@ README.md
 pyproject.toml
 src/nl2sql_agent/__init__.py
 src/nl2sql_agent/catalog.py
+src/nl2sql_agent/charts.py
+src/nl2sql_agent/connection_store.py
 src/nl2sql_agent/executor.py
 src/nl2sql_agent/generator.py
 src/nl2sql_agent/llm_factory.py
@@ -11,6 +13,7 @@ src/nl2sql_agent/models.py
 src/nl2sql_agent/mysql_catalog.py
 src/nl2sql_agent/oracle_catalog.py
 src/nl2sql_agent/postgres_catalog.py
+src/nl2sql_agent/runtime_connection.py
 src/nl2sql_agent/schema_loader.py
 src/nl2sql_agent/schema_retrieval.py
 src/nl2sql_agent/settings.py

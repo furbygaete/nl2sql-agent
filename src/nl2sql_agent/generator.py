@@ -7,11 +7,13 @@ a guard so the module loads without langsmith installed.
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
 
 import openai
 from loguru import logger
 
+from .charts import generate_chart_image_payload, parse_tabular_tool_result
 from .connection_store import DbConnectionProfile
 from .models import UserMessage
 
@@ -27,6 +29,17 @@ except Exception:  # pragma: no cover
 
     def traceable(fn):
         return fn
+
+
+_CHART_INTENT_RE = re.compile(
+    r"\b(chart|graph|plot|visuali[sz](e|ation)|image|diagram)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_chart_output(message: str) -> bool:
+    """True only when the user explicitly asks for a visual output."""
+    return bool(_CHART_INTENT_RE.search(message or ""))
 
 
 @traceable
@@ -60,6 +73,8 @@ async def stream_agent_response(
         )
     runtime_messages.append({"role": "user", "content": mensaje.message})
 
+    seen_image_sources: set[str] = set()
+    allow_chart_output = _wants_chart_output(mensaje.message)
     try:
         async for chunk, metadata in agent.astream(
             input={"messages": runtime_messages},
@@ -108,9 +123,27 @@ async def stream_agent_response(
             if es_mensaje_herramienta:
                 if texto_chunk:
                     yield f"data: {json.dumps({'type': 'tool_result', 'content': texto_chunk})}\n\n"
+                    if allow_chart_output:
+                        parsed = parse_tabular_tool_result(texto_chunk)
+                        if parsed is not None and texto_chunk not in seen_image_sources:
+                            columns, rows = parsed
+                            image_payload = generate_chart_image_payload(columns, rows)
+                            if image_payload is not None:
+                                seen_image_sources.add(texto_chunk)
+                                yield f"data: {json.dumps({'type': 'image', **image_payload})}\n\n"
             else:
                 if texto_chunk:
                     yield f"data: {json.dumps({'type': 'text', 'content': texto_chunk})}\n\n"
+                    if allow_chart_output:
+                        # Some models may echo tabular JSON in plain text chunks
+                        # instead of a ToolMessage; render charts in that case too.
+                        parsed = parse_tabular_tool_result(texto_chunk)
+                        if parsed is not None and texto_chunk not in seen_image_sources:
+                            columns, rows = parsed
+                            image_payload = generate_chart_image_payload(columns, rows)
+                            if image_payload is not None:
+                                seen_image_sources.add(texto_chunk)
+                                yield f"data: {json.dumps({'type': 'image', **image_payload})}\n\n"
 
                 if hasattr(chunk, "tool_calls") and chunk.tool_calls:
                     nombres_herramientas = [

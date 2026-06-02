@@ -27,6 +27,9 @@ Requires-Dist: aiosqlite==0.22.1
 Requires-Dist: deepagents==0.5.3
 Requires-Dist: loguru==0.7.3
 Requires-Dist: anyio
+Requires-Dist: matplotlib>=3.10.9
+Requires-Dist: openpyxl>=3.1.5
+Requires-Dist: reportlab>=4.5.1
 Provides-Extra: dev
 Requires-Dist: pytest; extra == "dev"
 
@@ -59,6 +62,8 @@ flowchart LR
 ```
 
 The agent has two parallel database paths: backend-agnostic guarded tools for execution and identifier checks on all supported databases, plus optional SQLcl-MCP for Oracle-specific introspection (table descriptions, sample rows, query execution). The curated `tools.py` wrappers enforce a **strict read-only `SELECT`** guard with sqlglot-based cure-and-validate against `schema.json`.
+
+In the `/gui/` sidebar, saved connection profiles (Oracle/Postgres) render as a selectable list. Use **Admin connections** in the sidebar footer to create/update/delete profiles in `data/connections.json` (or `CONNECTION_STORE_PATH`). The selected profile is sent with each message; Oracle profiles also trigger SQLcl MCP `connect` switching before streaming.
 
 ---
 
@@ -201,7 +206,8 @@ Then fill in:
 | `ORACLE_CLIENT_MODE=thick` + `ORACLE_CLIENT_LIB_DIR` | Only if you use Instant Client / full client (typical on Windows) |
 | `SQLCL_PATH=vendor/sqlcl/bin/sql.exe` | Oracle-only optional MCP path (`vendor/sqlcl/bin/sql` on macOS/Linux) |
 | `SQLCL_USER_DIR=.sqlcl` | Keeps SQLcl's wallet inside the repo (gitignored) |
-| `SQLCL_CONNECTIONS=[main,RO_USER/RO_PASSWORD@host:1521/service]` | Saved on lifespan boot |
+| `CONNECTION_STORE_PATH=data/connections.json` | File-backed profile store used by the in-app Admin menu |
+| `SQLCL_CONNECTIONS=[main,RO_USER/RO_PASSWORD@host:1521/service]` | Optional seed source on first boot when the store file is empty |
 | `NICEGUI_STORAGE_SECRET=<random>` | Signs per-user session storage |
 
 Optional alternate LLM provider:
@@ -231,8 +237,10 @@ vendor/sqlcl/bin/sql -S -name YOUR_CONN @scripts/export_schema.sql > data/schema
 ### 6. Run
 
 ```bash
-uv run uvicorn nl2sql_agent.main:app --host 127.0.0.1 --port 8000
+uv run python -m uvicorn nl2sql_agent.main:app --host 127.0.0.1 --port 8000
 ```
+
+> On Windows, prefer `python -m uvicorn` via `uv run` (as shown above) to avoid `Failed to canonicalize script path` errors from direct script entrypoints.
 
 Then open in your browser:
 
@@ -260,7 +268,8 @@ Server-Sent Events stream. Body:
 {
   "message": "list employees hired in 2025",
   "user_id": "u1",
-  "thread_id": "t1"
+  "thread_id": "t1",
+  "connection_id": "main"
 }
 ```
 
